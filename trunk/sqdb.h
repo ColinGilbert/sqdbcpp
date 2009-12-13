@@ -5,6 +5,39 @@
 
 #include "sqlite3.h"
 
+#ifdef _WIN32
+#  include <tchar.h>
+#  define SQDB_MAKE_TEXT(x) _TEXT(x)
+#  define SQDB_STRLEN _tcslen
+#  define SQDB_STRDUP _tcsdup
+#else
+#  define SQDB_MAKE_TEXT(x) (x) 
+#  define SQDB_STRLEN strlen
+#  define SQDB_STRDUP strdup
+#endif
+
+#if !defined(SQDB_UTF16) && !defined(SQDB_UTF8)
+#  ifdef _WIN32
+#    if defined(UNICODE) || defined(_UNICODE)
+#      define SQDB_UTF16
+#    else
+#      define SQDB_UTF8
+#    endif
+#  else
+#    define SQDB_UTF8
+#  endif
+#endif
+
+#ifdef SQDB_UTF8
+#  define SQDB_CHAR char 
+#  define SQDB_STD_STRING std::string
+#endif
+
+#ifdef SQDB_UTF16
+#  define SQDB_CHAR TCHAR 
+#  define SQDB_STD_STRING std::wstring
+#endif
+
 namespace sqdb
 {
 
@@ -15,16 +48,16 @@ public:
 
   Exception(sqlite3* db, int errorCode);
 
-  Exception(const char* errorMsg);
+  Exception(const SQDB_CHAR* errorMsg);
 
   ~Exception();
 
   int GetErrorCode() const;
 
-  const char* GetErrorMsg() const;
+  const SQDB_CHAR* GetErrorMsg() const;
 private:
   int m_errorCode;
-  char* m_errorMsg;
+  SQDB_CHAR* m_errorMsg;
 };
 
 #define CHECK(db, returnCode) \
@@ -71,15 +104,15 @@ public:
   operator int() const;
   operator long long() const;
   operator double() const;
-  operator std::string() const;
-  operator const char*() const;
+  operator SQDB_STD_STRING() const;
+  operator const SQDB_CHAR*() const;
   operator Blob() const;
 
   int GetInt() const;
   long long GetLongLong() const;
   double GetDouble() const;
-  std::string GetString() const;
-  const char* GetText() const;
+  SQDB_STD_STRING GetString() const;
+  const SQDB_CHAR* GetText() const;
   Blob GetBlob() const;
 
 private:
@@ -116,8 +149,8 @@ private:
   void DoBind(int i, int value); 
   void DoBind(int i, long long value); 
   void DoBind(int i, double value);
-  void DoBind(int i, const std::string& value);
-  void DoBind(int i, const char* value);
+  void DoBind(int i, const SQDB_STD_STRING& value);
+  void DoBind(int i, const SQDB_CHAR* value);
 
   // Bind blob.
   void DoBind(int i, const void* value, int n);
@@ -138,27 +171,27 @@ class QueryStr
 public:
   QueryStr();
 
-  const char* Format(const char* fmt, ...);
+  const SQDB_CHAR* Format(const SQDB_CHAR* fmt, ...);
 
-  const char* Get() const;
+  const SQDB_CHAR* Get() const;
 
   ~QueryStr();
 
 private:
-  char* m_buf;
+  SQDB_CHAR* m_buf;
 };
 
 class Db : public RefCount
 {
 public:
-  Db(const char* fileName);
+  Db(const SQDB_CHAR* fileName);
 
   void BeginTransaction();
   void CommitTransaction();
   void RollbackTransaction();
 
-  bool TableExists(const char* tableName);
-  Statement Query(const char* queryStr);
+  bool TableExists(const SQDB_CHAR* tableName);
+  Statement Query(const SQDB_CHAR* queryStr);
   long long LastId();
 
   Db(const Db& x);
