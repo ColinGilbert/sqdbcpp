@@ -1,8 +1,9 @@
 #include <cassert>
-#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <memory>
+
+#include <stdlib.h>
 
 #include "sqdb.h"
 
@@ -11,19 +12,33 @@ using namespace sqdb;
 Exception::Exception(sqlite3* db)
 {
   m_errorCode = sqlite3_errcode(db); 
-  m_errorMsg = strdup(sqlite3_errmsg(db));
+  SQDB_CHAR* c = (SQDB_CHAR*)
+#ifdef SQDB_UTF8
+    sqlite3_errmsg
+#else 
+    sqlite3_errmsg16
+#endif
+    (db);
+  m_errorMsg = SQDB_STRDUP(c);
 }
 
 Exception::Exception(sqlite3* db, int errorCode)
 : m_errorCode(errorCode)
 {
-  m_errorMsg = strdup(sqlite3_errmsg(db));
+  SQDB_CHAR* c = (SQDB_CHAR*)
+#ifdef SQDB_UTF8
+    sqlite3_errmsg
+#else 
+    sqlite3_errmsg16
+#endif
+    (db);
+  m_errorMsg = SQDB_STRDUP(c);
 }
 
-Exception::Exception(const char* errorMsg)
+Exception::Exception(const SQDB_CHAR* errorMsg)
 : m_errorCode(-1)
 {
-  m_errorMsg = strdup(errorMsg);
+  m_errorMsg = SQDB_STRDUP(errorMsg);
 }
 
 Exception::~Exception()
@@ -36,7 +51,7 @@ int Exception::GetErrorCode() const
   return m_errorCode;
 }
 
-const char* Exception::GetErrorMsg() const
+const SQDB_CHAR* Exception::GetErrorMsg() const
 {
   return m_errorMsg;
 }
@@ -91,7 +106,7 @@ Blob::Blob(const void* data, int size)
 }
 
 Blob::Blob(const Blob& x)
-: m_data(x.m_data), m_size(x.m_size)
+: RefCount(x), m_data(x.m_data), m_size(x.m_size)
 {
   IncRef();
 }
@@ -146,12 +161,12 @@ Convertor::operator double() const
   return GetDouble();
 }
 
-Convertor::operator std::string() const
+Convertor::operator SQDB_STD_STRING() const
 {
   return GetString();
 }
 
-Convertor::operator const char*() const
+Convertor::operator const SQDB_CHAR*() const
 {
   return GetText();
 }
@@ -179,16 +194,30 @@ double Convertor::GetDouble() const
   return sqlite3_column_double(m_stmt, m_field);
 }
 
-std::string Convertor::GetString() const
+SQDB_STD_STRING Convertor::GetString() const
 {
   assert(m_stmt);
-  return (const char*)sqlite3_column_text(m_stmt, m_field);
+  const SQDB_CHAR* result = (const SQDB_CHAR*)
+#ifdef SQDB_UTF8
+  sqlite3_column_text
+#else
+  sqlite3_column_text16
+#endif
+  (m_stmt, m_field);
+  return result;
 }
 
-const char* Convertor::GetText() const
+const SQDB_CHAR* Convertor::GetText() const
 {
   assert(m_stmt);
-  return (const char*)sqlite3_column_text(m_stmt, m_field);
+  const SQDB_CHAR* result = (const SQDB_CHAR*)
+#ifdef SQDB_UTF8
+  sqlite3_column_text
+#else
+  sqlite3_column_text16
+#endif
+  (m_stmt, m_field);
+  return result;
 }
 
 Blob Convertor::GetBlob() const
@@ -288,17 +317,30 @@ void Statement::DoBind(int i, double value)
   CHECK(m_db, ret);
 }
 
-void Statement::DoBind(int i, const std::string& value)
+void Statement::DoBind(int i, const SQDB_STD_STRING& value)
 {
-  const int ret = sqlite3_bind_text(m_stmt, i, value.c_str(), 
-                                    value.size(), SQLITE_TRANSIENT);
+  const int ret = 
+#ifdef SQDB_UTF8
+  sqlite3_bind_text
+#else
+  sqlite3_bind_text16
+#endif
+  (m_stmt, i, value.c_str(), value.size() * sizeof(SQDB_STD_STRING::value_type), SQLITE_TRANSIENT);
   CHECK(m_db, ret);
 }
 
-void Statement::DoBind(int i, const char* value)
+void Statement::DoBind(int i, const SQDB_CHAR* value)
 {
-  const int ret = sqlite3_bind_text(m_stmt, i, value, 
-                                    strlen(value), SQLITE_TRANSIENT);
+  const int len = SQDB_STRLEN(value);
+
+  const int ret = 
+#ifdef SQDB_UTF8
+  sqlite3_bind_text
+#else
+  sqlite3_bind_text16
+#endif
+  (m_stmt, i, value, len * sizeof(SQDB_CHAR), SQLITE_TRANSIENT);
+
   CHECK(m_db, ret);
 }
 
@@ -328,30 +370,47 @@ QueryStr::QueryStr()
 {
 }
 
-const char* QueryStr::Format(const char* fmt, ...)
+const SQDB_CHAR* QueryStr::Format(const SQDB_CHAR* fmt, ...)
 {
-  sqlite3_free((char*)m_buf);
   va_list va;
   va_start(va, fmt);
+#ifdef SQDB_UTF8
+  sqlite3_free(m_buf);
   m_buf = sqlite3_vmprintf(fmt, va);
+#else
+  free(m_buf);
+  int len = _vscwprintf(fmt, va) + 1;
+  m_buf = (SQDB_CHAR*)malloc(len * sizeof(SQDB_CHAR));
+  vswprintf(m_buf, len, fmt, va);
+#endif
+
   va_end(va);
+
   return m_buf;
 }
 
-const char* QueryStr::Get() const
+const SQDB_CHAR* QueryStr::Get() const
 {
   return m_buf;
 }
 
 QueryStr::~QueryStr()
 {
+#ifdef SQDB_UTF8
   sqlite3_free(m_buf);
+#else
+  free(m_buf);
+#endif
 }
 
-Db::Db(const char* fileName)
+Db::Db(const SQDB_CHAR* fileName)
 : RefCount()
 {
+#ifdef SQDB_UTF8
   const int ret = sqlite3_open(fileName, &m_db);
+#else
+  const int ret = sqlite3_open16(fileName, &m_db);
+#endif
   CHECK(m_db, ret);
 
   IncRef();
@@ -359,33 +418,38 @@ Db::Db(const char* fileName)
 
 void Db::BeginTransaction()
 {
-  Query("BEGIN;").Next();
+  Query(SQDB_MAKE_TEXT("BEGIN;")).Next();
 }
 
 void Db::CommitTransaction()
 {
-  Query("COMMIT;").Next();
+  Query(SQDB_MAKE_TEXT("COMMIT;")).Next();
 }
 
 void Db::RollbackTransaction()
 {
-  Query("ROLLBACK;").Next();
+  Query(SQDB_MAKE_TEXT("ROLLBACK;")).Next();
 }
 
-bool Db::TableExists(const char* tableName)
+bool Db::TableExists(const SQDB_CHAR* tableName)
 {
   QueryStr str;
-  Statement s = Query(str.Format("select count(*) from sqlite_master "
-                                 "where type='table' and name=%Q;", tableName));
+  Statement s = 
+    Query(
+      str.Format(SQDB_MAKE_TEXT("select count(*) from sqlite_master where type='table' and name='%s';"), tableName));
   s.Next();
   const int count = s.GetField(0);
   return count > 0;
 }
 
-Statement Db::Query(const char* queryStr)
+Statement Db::Query(const SQDB_CHAR* queryStr)
 {
   sqlite3_stmt* stmt = NULL;
+#ifdef SQDB_UTF8
   const int ret = sqlite3_prepare(m_db, queryStr, -1, &stmt, NULL);
+#else
+  const int ret = sqlite3_prepare16(m_db, queryStr, -1, &stmt, NULL);
+#endif
   CHECK(m_db, ret);
 
   return Statement(m_db, stmt);
